@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -20,17 +21,18 @@ jobs:
       - run: flutter config --enable-macos-desktop
       - run: flutter pub get
 
-      # Build unsigned app
-      - name: Build macOS (Release, no codesign)
-        run: flutter build macos --release --no-codesign
+      - name: Build macOS (Release)
+        run: flutter build macos --release
 
-      # Make a DMG
       - name: Install create-dmg
         run: brew install create-dmg
 
       - name: Create DMG
         run: |
           APP=$(ls -d build/macos/Build/Products/Release/*.app | head -n 1)
+          if [ -z "$APP" ]; then
+            echo "No .app found in Release output"; exit 1
+          fi
           NAME=$(basename "$APP" .app)
           mkdir -p dist
           create-dmg --no-internet-enable --volname "$NAME" "dist/$NAME.dmg" "$APP"
