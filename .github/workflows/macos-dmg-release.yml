@@ -1,0 +1,74 @@
+name: macOS DMG (signed + notarized)
+
+on:
+  push:
+    tags:
+      - 'v*'   # tag to publish a release (e.g., v1.0.0)
+
+jobs:
+  build-release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter --version
+      - run: flutter config --enable-macos-desktop
+      - run: flutter pub get
+
+      # Import signing cert into keychain
+      - name: Import signing certificate
+        uses: apple-actions/import-codesign-certs@v2
+        with:
+          p12-file-base64: ${{ secrets.APPLE_P12_CERT }}
+          p12-password: ${{ secrets.APPLE_P12_PASSWORD }}
+
+      # Build with codesign via Xcode (uses your Team set in the project)
+      - name: Build macOS (Release, signed)
+        run: flutter build macos --release
+
+      # Create DMG
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Create DMG
+        id: dmg
+        run: |
+          APP=$(ls -d build/macos/Build/Products/Release/*.app | head -n 1)
+          NAME=$(basename "$APP" .app)
+          mkdir -p dist
+          DMG="dist/$NAME.dmg"
+          create-dmg --no-internet-enable --volname "$NAME" "$DMG" "$APP"
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "dmg=$DMG" >> $GITHUB_OUTPUT
+
+      # Notarize DMG with notarytool (API key)
+      - name: Write API key file
+        run: |
+          mkdir -p ~/.appstoreconnect
+          echo "${{ secrets.APPLE_API_KEY_P8 }}" | base64 --decode > ~/.appstoreconnect/AuthKey_${{ secrets.APPLE_KEY_ID }}.p8
+
+      - name: Notarize DMG
+        run: |
+          xcrun notarytool submit "${{ steps.dmg.outputs.dmg }}" \
+            --key ~/.appstoreconnect/AuthKey_${{ secrets.APPLE_KEY_ID }}.p8 \
+            --key-id ${{ secrets.APPLE_KEY_ID }} \
+            --issuer ${{ secrets.APPLE_ISSUER_ID }} \
+            --team-id ${{ secrets.APPLE_TEAM_ID }} \
+            --wait
+
+      # Staple (so it works offline)
+      - name: Staple ticket
+        run: xcrun stapler staple "${{ steps.dmg.outputs.dmg }}"
+
+      # Upload as Release asset
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.dmg.outputs.dmg }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
